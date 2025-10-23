@@ -5,8 +5,8 @@ authors = []
 telemetry = true
 cache_dir = '.\.cache'
 requirements = []
-[contracts.roolup-transaction-simulator]
-path = 'contracts/roolup-transaction-simulator.clar'
+[contracts.rollup-transaction-simulator]
+path = 'contracts/rollup-transaction-simulator.clar'
 clarity_version = 3
 epoch = 3.1
 [repl.analysis]
@@ -16,7 +16,7 @@ passes = ['check_checker']
 strict = false
 trusted_sender = false
 trusted_caller = false
-callee_filter = false
+callee_filter = true
 
 [repl.remote_data]
 enabled = false

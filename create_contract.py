@@ -1,4 +1,4 @@
-(define-constant contract-owner tx-sender)
+content = """(define-constant contract-owner tx-sender)
 (define-constant err-owner-only (err u100))
 (define-constant err-insufficient-balance (err u101))
 (define-constant err-invalid-amount (err u102))
@@ -42,6 +42,7 @@
 (define-public (deposit (amount uint))
   (begin
     (asserts! (> amount u0) err-invalid-amount)
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
     (let ((current-balance (default-to u0 (map-get? user-balances tx-sender))))
       (map-set user-balances tx-sender (+ current-balance amount))
       (print {action: deposit, user: tx-sender, amount: amount, new-balance: (+ current-balance amount)})
@@ -52,9 +53,10 @@
     (asserts! (> amount u0) err-invalid-amount)
     (asserts! (>= current-balance amount) err-insufficient-balance)
     (map-set user-balances tx-sender (- current-balance amount))
-    ;; STX transfer removed: perform actual STX transfer with the correct as-contract usage or via an external mechanism
+    (try! (as-contract (stx-transfer? amount tx-sender tx-sender)))
     (print {action: withdraw, user: tx-sender, amount: amount, new-balance: (- current-balance amount)})
     (ok (- current-balance amount))))
+
 (define-public (queue-transfer (to principal) (amount uint))
   (let (
     (sender-balance (default-to u0 (map-get? user-balances tx-sender)))
@@ -294,3 +296,16 @@
     total-fees-collected: (var-get total-fees-collected),
     max-fee-percentage: max-fee-percentage
   })
+"""
+
+with open('contracts/rollup-transaction-simulator.clar', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+with open('contracts/rollup-transaction-simulator.clar', 'rb') as f:
+    data = f.read()
+data = data.replace(b'\r\n', b'\n')
+with open('contracts/rollup-transaction-simulator.clar', 'wb') as f:
+    f.write(data)
+
+print('Contract file created successfully')
+
