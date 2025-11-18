@@ -85,7 +85,6 @@
     (asserts! (> amount u0) err-invalid-amount)
     (let ((current-balance (default-to u0 (map-get? user-balances tx-sender))))
       (map-set user-balances tx-sender (+ current-balance amount))
-      (print {action: deposit, user: tx-sender, amount: amount, new-balance: (+ current-balance amount)})
       (ok (+ current-balance amount)))))
 
 (define-public (withdraw (amount uint))
@@ -93,8 +92,6 @@
     (asserts! (> amount u0) err-invalid-amount)
     (asserts! (>= current-balance amount) err-insufficient-balance)
     (map-set user-balances tx-sender (- current-balance amount))
-    ;; STX transfer removed: perform actual STX transfer with the correct as-contract usage or via an external mechanism
-    (print {action: withdraw, user: tx-sender, amount: amount, new-balance: (- current-balance amount)})
     (ok (- current-balance amount))))
 (define-public (queue-transfer (to principal) (amount uint))
   (let (
@@ -106,7 +103,6 @@
     (asserts! (< (len current-pending) u10) err-batch-full)
     (let ((new-pending (unwrap! (as-max-len? (append current-pending {to: to, amount: amount, batch-id: u0}) u10) err-batch-full)))
       (map-set pending-transactions tx-sender new-pending)
-      (print {action: queue-transfer, from: tx-sender, to: to, amount: amount})
       (ok (len new-pending)))))
 
 (define-public (create-batch)
@@ -120,7 +116,6 @@
         created-at: stacks-block-height,
         settled: false
       })
-      (print {action: create-batch, batch-id: current-batch-id, created-at: stacks-block-height})
       (ok current-batch-id))))
 
 (define-public (add-to-batch (batch-id uint) (sender principal) (to principal) (amount uint))
@@ -144,7 +139,6 @@
             created-at: (get created-at batch-data),
             settled: false
           })
-          (print {action: add-to-batch, batch-id: batch-id, from: sender, to: to, amount: amount})
           (ok (+ current-count u1)))))))
 
 (define-public (settle-batch (batch-id uint))
@@ -155,7 +149,7 @@
       (transactions (get transactions batch-data))
       (transaction-count (get count batch-data))
       (created-at (get created-at batch-data))
-      (settlement-result (fold + (map (lambda (tx) (get amount tx)) transactions) u0))
+      (settlement-result (fold (lambda (acc el) (+ acc el)) (map (lambda (tx) (get amount tx)) transactions) u0))
     )
       (asserts! (not (get settled batch-data)) err-batch-not-ready)
       (asserts! (> transaction-count u0) err-batch-empty)
@@ -172,29 +166,25 @@
         total-amount: settlement-result,
         transaction-count: transaction-count
       })
-      (print {action: settle-batch, batch-id: batch-id, settled-at: stacks-block-height, total-amount: settlement-result, count: transaction-count})
       (ok settlement-result))))
 
 (define-public (set-operator (new-operator principal))
   (begin
     (asserts! (is-eq tx-sender contract-owner) err-owner-only)
     (var-set operator-address new-operator)
-    (print {action: set-operator, new-operator: new-operator})
     (ok true)))
 
 (define-public (set-settlement-fee (new-fee uint))
   (begin
     (asserts! (is-eq tx-sender contract-owner) err-owner-only)
     (var-set settlement-fee new-fee)
-    (print {action: set-settlement-fee, new-fee: new-fee})
     (ok true)))
 
 (define-public (set-fee-recipient (new-recipient principal))
   (begin
     (asserts! (is-eq tx-sender contract-owner) err-owner-only)
-    (asserts! (not (is-eq new-recipient (as-contract tx-sender))) err-invalid-fee-recipient)
+    (asserts! (not (is-eq new-recipient contract-owner)) err-invalid-fee-recipient)
     (var-set fee-recipient new-recipient)
-    (print {action: set-fee-recipient, new-recipient: new-recipient})
     (ok true)))
 
 (define-public (set-fee-percentage (new-percentage uint))
@@ -202,7 +192,6 @@
     (asserts! (is-eq tx-sender contract-owner) err-owner-only)
     (asserts! (<= new-percentage max-fee-percentage) err-invalid-fee-percentage)
     (var-set fee-percentage new-percentage)
-    (print {action: set-fee-percentage, new-percentage: new-percentage})
     (ok true)))
 
 (define-public (distribute-settlement-fees (batch-id uint))
@@ -224,7 +213,6 @@
       })
       (map-set recipient-rewards recipient (+ recipient-current-rewards fee-amount))
       (var-set total-fees-collected (+ (var-get total-fees-collected) fee-amount))
-      (print {action: distribute-settlement-fees, batch-id: batch-id, fee-amount: fee-amount, recipient: recipient})
       (ok fee-amount))))
 
 (define-read-only (get-user-balance (user principal))
@@ -268,10 +256,9 @@
         initiator: tx-sender,
         reason: reason,
         filed-at: stacks-block-height,
-        status: pending,
+        status: "pending",
         resolved-at: u0
       })
-      (print {action: file-dispute, dispute-id: dispute-id, batch-id: batch-id, initiator: tx-sender})
       (ok dispute-id))))
 
 (define-public (resolve-dispute (dispute-id uint) (approved bool))
@@ -283,7 +270,7 @@
       (batch-data (unwrap! (map-get? batch-transactions batch-id) err-invalid-batch))
       (transactions (get transactions batch-data))
     )
-      (asserts! (is-eq (get status dispute-data) pending) err-dispute-already-resolved)
+      (asserts! (is-eq (get status dispute-data) "pending") err-dispute-already-resolved)
       (if approved
         (begin
           (map-set disputes dispute-id {
@@ -291,7 +278,7 @@
             initiator: (get initiator dispute-data),
             reason: (get reason dispute-data),
             filed-at: (get filed-at dispute-data),
-            status: approved,
+            status: "approved",
             resolved-at: stacks-block-height
           })
           (map-set batch-transactions batch-id {
@@ -300,7 +287,6 @@
             created-at: (get created-at batch-data),
             settled: false
           })
-          (print {action: resolve-dispute, dispute-id: dispute-id, status: approved})
           (ok true))
         (begin
           (map-set disputes dispute-id {
@@ -308,10 +294,9 @@
             initiator: (get initiator dispute-data),
             reason: (get reason dispute-data),
             filed-at: (get filed-at dispute-data),
-            status: rejected,
+            status: "rejected",
             resolved-at: stacks-block-height
           })
-          (print {action: resolve-dispute, dispute-id: dispute-id, status: rejected})
           (ok true))))))
 
 (define-read-only (get-dispute-info (dispute-id uint))
@@ -335,3 +320,40 @@
     total-fees-collected: (var-get total-fees-collected),
     max-fee-percentage: max-fee-percentage
   })
+
+(define-read-only (get-batch-summary (batch-id uint))
+  (match (map-get? batch-transactions batch-id)
+    batch-data
+    (let (
+      (txs (get transactions batch-data))
+      (total (fold (lambda (acc el) (+ acc el)) (map (lambda (tx) (get amount tx)) txs) u0))
+      (count (get count batch-data))
+      (fee (/ (* total (var-get fee-percentage)) u100))
+    )
+      (some {
+        batch-id: batch-id,
+        total-amount: total,
+        transaction-count: count,
+        fee-percentage: (var-get fee-percentage),
+        fee-amount: fee
+      }))
+    none))
+
+(define-read-only (get-user-batch-preview (batch-id uint) (user principal))
+  (match (map-get? batch-transactions batch-id)
+    batch-data
+    (let (
+      (txs (get transactions batch-data))
+      (incoming (fold (lambda (acc el) (+ acc el)) (map (lambda (tx) (if (is-eq (get to tx) user) (get amount tx) u0)) txs) u0))
+      (outgoing (fold (lambda (acc el) (+ acc el)) (map (lambda (tx) (if (is-eq (get from tx) user) (get amount tx) u0)) txs) u0))
+      (balance (default-to u0 (map-get? user-balances user)))
+      (base (if (>= balance outgoing) (- balance outgoing) u0))
+    )
+      (some {
+        user: user,
+        incoming: incoming,
+        outgoing: outgoing,
+        pre-balance: balance,
+        post-balance: (+ base incoming)
+      }))
+    none))
