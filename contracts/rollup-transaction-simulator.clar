@@ -1,3 +1,22 @@
+(define-constant contract-owner tx-sender)
+(define-constant err-paused (err u113))
+(define-data-var paused bool false)
+
+(define-read-only (get-paused)
+  (var-get paused))
+
+(define-public (pause)
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (var-set paused true)
+    (ok true)))
+
+(define-public (resume)
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (var-set paused false)
+    (ok true)))
+
 (define-data-var owner principal tx-sender)
 (define-data-var pending-owner (optional principal) none)
 
@@ -79,9 +98,11 @@
     (asserts! (is-eq tx-sender contract-owner) err-owner-only)
     (map-set user-balances contract-owner u1000000)
     (ok true)))
+ 
 
 (define-public (deposit (amount uint))
   (begin
+    (asserts! (not (var-get paused)) err-paused)
     (asserts! (> amount u0) err-invalid-amount)
     (let ((current-balance (default-to u0 (map-get? user-balances tx-sender))))
       (map-set user-balances tx-sender (+ current-balance amount))
@@ -89,15 +110,18 @@
 
 (define-public (withdraw (amount uint))
   (let ((current-balance (default-to u0 (map-get? user-balances tx-sender))))
+    (asserts! (not (var-get paused)) err-paused)
     (asserts! (> amount u0) err-invalid-amount)
     (asserts! (>= current-balance amount) err-insufficient-balance)
     (map-set user-balances tx-sender (- current-balance amount))
     (ok (- current-balance amount))))
+
 (define-public (queue-transfer (to principal) (amount uint))
   (let (
     (sender-balance (default-to u0 (map-get? user-balances tx-sender)))
     (current-pending (default-to (list) (map-get? pending-transactions tx-sender)))
   )
+    (asserts! (not (var-get paused)) err-paused)
     (asserts! (> amount u0) err-invalid-amount)
     (asserts! (>= sender-balance amount) err-insufficient-balance)
     (asserts! (< (len current-pending) u10) err-batch-full)
@@ -107,6 +131,7 @@
 
 (define-public (create-batch)
   (begin
+    (asserts! (not (var-get paused)) err-paused)
     (asserts! (is-eq tx-sender (var-get operator-address)) err-owner-only)
     (let ((current-batch-id (+ (var-get batch-counter) u1)))
       (var-set batch-counter current-batch-id)
@@ -120,6 +145,7 @@
 
 (define-public (add-to-batch (batch-id uint) (sender principal) (to principal) (amount uint))
   (begin
+    (asserts! (not (var-get paused)) err-paused)
     (asserts! (is-eq tx-sender (var-get operator-address)) err-owner-only)
     (asserts! (> amount u0) err-invalid-amount)
     (let (
@@ -141,15 +167,38 @@
           })
           (ok (+ current-count u1)))))))
 
+(define-private (get-tx-amount (tx {from: principal, to: principal, amount: uint}))
+  (get amount tx))
+
+(define-private (sum-uint (a uint) (b uint))
+  (+ a b))
+
+(define-private (process-tx-for-preview (tx {from: principal, to: principal, amount: uint}) (state {user: principal, incoming: uint, outgoing: uint}))
+  (let (
+    (user (get user state))
+    (incoming (get incoming state))
+    (outgoing (get outgoing state))
+    (amt (get amount tx))
+    (is-incoming (is-eq (get to tx) user))
+    (is-outgoing (is-eq (get from tx) user))
+  )
+    {
+      user: user,
+      incoming: (if is-incoming (+ incoming amt) incoming),
+      outgoing: (if is-outgoing (+ outgoing amt) outgoing)
+    }
+  ))
+
 (define-public (settle-batch (batch-id uint))
   (begin
+    (asserts! (not (var-get paused)) err-paused)
     (asserts! (is-eq tx-sender (var-get operator-address)) err-owner-only)
     (let (
       (batch-data (unwrap! (map-get? batch-transactions batch-id) err-invalid-batch))
       (transactions (get transactions batch-data))
       (transaction-count (get count batch-data))
       (created-at (get created-at batch-data))
-      (settlement-result (fold (lambda (acc el) (+ acc el)) (map (lambda (tx) (get amount tx)) transactions) u0))
+      (settlement-result (fold sum-uint (map get-tx-amount transactions) u0))
     )
       (asserts! (not (get settled batch-data)) err-batch-not-ready)
       (asserts! (> transaction-count u0) err-batch-empty)
@@ -167,6 +216,8 @@
         transaction-count: transaction-count
       })
       (ok settlement-result))))
+
+ 
 
 (define-public (set-operator (new-operator principal))
   (begin
@@ -196,6 +247,7 @@
 
 (define-public (distribute-settlement-fees (batch-id uint))
   (begin
+    (asserts! (not (var-get paused)) err-paused)
     (asserts! (is-eq tx-sender (var-get operator-address)) err-owner-only)
     (let (
       (settlement-data (unwrap! (map-get? settlement-history batch-id) err-invalid-batch))
@@ -243,6 +295,7 @@
 
 (define-public (file-dispute (batch-id uint) (reason (string-ascii 256)))
   (begin
+    (asserts! (not (var-get paused)) err-paused)
     (let (
       (batch-data (unwrap! (map-get? batch-transactions batch-id) err-invalid-batch))
       (settled-at (get settled-at (unwrap! (map-get? settlement-history batch-id) err-invalid-batch)))
@@ -263,6 +316,7 @@
 
 (define-public (resolve-dispute (dispute-id uint) (approved bool))
   (begin
+    (asserts! (not (var-get paused)) err-paused)
     (asserts! (is-eq tx-sender contract-owner) err-owner-only)
     (let (
       (dispute-data (unwrap! (map-get? disputes dispute-id) err-dispute-not-found))
@@ -326,7 +380,7 @@
     batch-data
     (let (
       (txs (get transactions batch-data))
-      (total (fold (lambda (acc el) (+ acc el)) (map (lambda (tx) (get amount tx)) txs) u0))
+      (total (fold sum-uint (map get-tx-amount txs) u0))
       (count (get count batch-data))
       (fee (/ (* total (var-get fee-percentage)) u100))
     )
@@ -344,8 +398,10 @@
     batch-data
     (let (
       (txs (get transactions batch-data))
-      (incoming (fold (lambda (acc el) (+ acc el)) (map (lambda (tx) (if (is-eq (get to tx) user) (get amount tx) u0)) txs) u0))
-      (outgoing (fold (lambda (acc el) (+ acc el)) (map (lambda (tx) (if (is-eq (get from tx) user) (get amount tx) u0)) txs) u0))
+      (initial-state {user: user, incoming: u0, outgoing: u0})
+      (final-state (fold process-tx-for-preview txs initial-state))
+      (incoming (get incoming final-state))
+      (outgoing (get outgoing final-state))
       (balance (default-to u0 (map-get? user-balances user)))
       (base (if (>= balance outgoing) (- balance outgoing) u0))
     )
