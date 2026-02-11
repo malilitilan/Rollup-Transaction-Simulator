@@ -413,3 +413,26 @@
         post-balance: (+ base incoming)
       }))
     none))
+
+(define-constant err-already-finalized (err u114))
+(define-constant err-window-active (err u115))
+
+(define-map finalization-status uint { finalized-at: uint, finalizer: principal })
+
+(define-public (finalize-batch (batch-id uint))
+  (let (
+    (settlement (unwrap! (map-get? settlement-history batch-id) err-batch-not-ready))
+    (settled-at (get settled-at settlement))
+  )
+    (asserts! (not (var-get paused)) err-paused)
+    (asserts! (> stacks-block-height (+ settled-at dispute-window-blocks)) err-window-active)
+    (asserts! (is-none (map-get? finalization-status batch-id)) err-already-finalized)
+    (map-set finalization-status batch-id {
+      finalized-at: stacks-block-height,
+      finalizer: tx-sender
+    })
+    (print {action: "finalize-batch", batch-id: batch-id, finalized-at: stacks-block-height})
+    (ok true)))
+
+(define-read-only (get-finalization-status (batch-id uint))
+  (map-get? finalization-status batch-id))
