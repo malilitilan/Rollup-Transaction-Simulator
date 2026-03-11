@@ -1,4 +1,5 @@
 (define-constant contract-owner tx-sender)
+(define-constant err-owner-only (err u100))
 (define-constant err-paused (err u113))
 (define-data-var paused bool false)
 
@@ -59,7 +60,6 @@
     )
   )
 )
-(define-constant err-owner-only (err u100))
 (define-constant err-insufficient-balance (err u101))
 (define-constant err-invalid-amount (err u102))
 (define-constant err-invalid-batch (err u103))
@@ -436,3 +436,48 @@
 
 (define-read-only (get-finalization-status (batch-id uint))
   (map-get? finalization-status batch-id))
+
+(define-constant err-batch-not-settled (err u116))
+(define-constant err-batch-not-finalized (err u117))
+(define-constant err-batch-already-executed (err u118))
+
+(define-map batch-execution-status uint { executed-at: uint, executor: principal })
+
+(define-private (apply-tx-to-balances (tx {from: principal, to: principal, amount: uint}) (acc (response uint uint)))
+  (match acc
+    executed
+    (let (
+      (from (get from tx))
+      (to (get to tx))
+      (amount (get amount tx))
+      (from-balance (default-to u0 (map-get? user-balances from)))
+      (to-balance (default-to u0 (map-get? user-balances to)))
+    )
+      (if (>= from-balance amount)
+        (begin
+          (map-set user-balances from (- from-balance amount))
+          (map-set user-balances to (+ to-balance amount))
+          (ok (+ executed u1)))
+        err-insufficient-balance))
+    err-val (err err-val)))
+
+(define-public (execute-finalized-batch (batch-id uint))
+  (begin
+    (asserts! (not (var-get paused)) err-paused)
+    (asserts! (is-eq tx-sender (var-get operator-address)) err-owner-only)
+    (asserts! (is-some (map-get? settlement-history batch-id)) err-batch-not-settled)
+    (asserts! (is-some (map-get? finalization-status batch-id)) err-batch-not-finalized)
+    (asserts! (is-none (map-get? batch-execution-status batch-id)) err-batch-already-executed)
+    (let (
+      (batch-data (unwrap! (map-get? batch-transactions batch-id) err-invalid-batch))
+      (txs (get transactions batch-data))
+      (tx-count (get count batch-data))
+      (executed (unwrap! (fold apply-tx-to-balances txs (ok u0)) err-invalid-batch))
+    )
+      (asserts! (is-eq executed tx-count) err-invalid-batch)
+      (map-set batch-execution-status batch-id { executed-at: stacks-block-height, executor: tx-sender })
+      (print {action: "execute-finalized-batch", batch-id: batch-id, executed: executed})
+      (ok executed))))
+
+(define-read-only (get-batch-execution-status (batch-id uint))
+  (map-get? batch-execution-status batch-id))
