@@ -1,0 +1,26 @@
+[project]
+name = 'rollup'
+description = ''
+authors = []
+telemetry = true
+cache_dir = '.\.cache'
+requirements = []
+[contracts.rollup-transaction-simulator]
+path = 'contracts/rollup-transaction-simulator.clar'
+clarity_version = 3
+epoch = 3.1
+[repl.analysis]
+passes = []
+
+[analysis]
+passes = []
+
+[analysis.check_checker]
+strict = false
+trusted_sender = true
+trusted_caller = true
+callee_filter = true
+
+[repl.remote_data]
+enabled = false
+api_url = 'https://api.hiro.so'
